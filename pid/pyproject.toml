@@ -25,7 +25,7 @@ serverapp = "pid.server_app:app"
 clientapp = "pid.client_app:app"
 
 [tool.flwr.app.config]
-num-server-rounds = 20
+num-server-rounds = 30
 fraction-fit = 0.5
 local-epochs = 1
 
