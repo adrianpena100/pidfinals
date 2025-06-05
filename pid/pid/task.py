@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 # Federated datasets and partitioning utilities
-from flwr_datasets import FederatedDataset  # Load federated CIFAR-10 dataset
+from flwr_datasets import FederatedDataset  # Load federated datasets
 from flwr_datasets.partitioner import IidPartitioner  # IID partitioner for data splitting
 
 # Image transformation utilities
@@ -21,28 +21,36 @@ fds = None  # Cache FederatedDataset instance across calls
 
 
 class Net(nn.Module):
-    """
-    Simple CNN model adapted from 'PyTorch: A 60 Minute Blitz'.
-    Architecture:
-      - Conv2d -> ReLU -> MaxPool
-      - Conv2d -> ReLU -> MaxPool
-      - Flatten -> FC -> ReLU -> FC -> ReLU -> FC
-    Output for 10 classes.
-    """
-    def __init__(self):
-        super(Net, self).__init__()
-        # First convolutional layer: in_channels=3 (RGB), out_channels=6, kernel_size=5
-        self.conv1 = nn.Conv2d(3, 6, 5)
-        # Max-pooling layer with 2x2 window
+    """Simple CNN used for CIFAR-10 and FEMNIST experiments."""
+
+    def __init__(self, input_channels: int = 3, num_classes: int = 10, img_size: int = 32):
+        """Create the network.
+
+        Parameters
+        ----------
+        input_channels: int
+            Number of image channels (3 for CIFAR-10, 1 for FEMNIST).
+        num_classes: int
+            Number of output classes.
+        img_size: int
+            Image width/height (32 for CIFAR-10, 28 for FEMNIST).
+        """
+
+        super().__init__()
+        self.conv1 = nn.Conv2d(input_channels, 6, 5)
         self.pool = nn.MaxPool2d(2, 2)
-        # Second convolutional layer: in_channels=6, out_channels=16, kernel_size=5
         self.conv2 = nn.Conv2d(6, 16, 5)
-        # Fully connected layers
-        # Input features = 16 * 5 * 5 after two poolings on 32x32 input
-        self.fc1 = nn.Linear(16 * 5 * 5, 120)
+
+        # Determine the flattened feature size dynamically
+        with torch.no_grad():
+            dummy = torch.zeros(1, input_channels, img_size, img_size)
+            x = self.pool(F.relu(self.conv1(dummy)))
+            x = self.pool(F.relu(self.conv2(x)))
+            self._flattened_size = x.view(1, -1).shape[1]
+
+        self.fc1 = nn.Linear(self._flattened_size, 120)
         self.fc2 = nn.Linear(120, 84)
-        # Final output layer for 10 classes
-        self.fc3 = nn.Linear(84, 10)
+        self.fc3 = nn.Linear(84, num_classes)
 
     def forward(self, x):
         # Pass input through conv => ReLU => pool
@@ -50,7 +58,7 @@ class Net(nn.Module):
         # Pass through second conv => ReLU => pool
         x = self.pool(F.relu(self.conv2(x)))
         # Flatten tensor to (batch_size, features)
-        x = x.view(-1, 16 * 5 * 5)
+        x = x.view(-1, self._flattened_size)
         # Fully connected layers with ReLU activations
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
@@ -58,9 +66,9 @@ class Net(nn.Module):
         return self.fc3(x)
 
 
-def load_data(partition_id: int, num_partitions: int):
+def load_data(partition_id: int, num_partitions: int, dataset: str = "cifar10"):
     """
-    Load and partition CIFAR-10 data for a specific client.
+    Load and partition data for a specific client.
 
     Steps:
       1. Initialize FederatedDataset once (global cache).
@@ -70,23 +78,29 @@ def load_data(partition_id: int, num_partitions: int):
       5. Return DataLoader for train and test splits.
     """
     global fds
-    # Initialize dataset and partitioner on first call
-    if fds is None:
+    # Initialize dataset and partitioner on first call or dataset change
+    global fds
+    if fds is None or getattr(fds, "_dataset_name", "") != dataset:
         partitioner = IidPartitioner(num_partitions=num_partitions)
-        fds = FederatedDataset(
-            dataset="uoft-cs/cifar10",
-            partitioners={"train": partitioner},
-        )
+        dataset_id = "uoft-cs/cifar10" if dataset == "cifar10" else "flwrlabs/femnist"
+        fds = FederatedDataset(dataset=dataset_id, partitioners={"train": partitioner})
+        fds._dataset_name = dataset
     # Load specific client partition
     partition = fds.load_partition(partition_id)
     # Split into train/test
     partition_train_test = partition.train_test_split(test_size=0.2, seed=42)
 
-    # Define transformations: convert to tensor and normalize to [-1,1]
-    pytorch_transforms = Compose([
-        ToTensor(),
-        Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-    ])
+    # Define dataset specific transforms
+    if dataset == "cifar10":
+        pytorch_transforms = Compose([
+            ToTensor(),
+            Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+        ])
+    else:  # FEMNIST images are grayscale
+        pytorch_transforms = Compose([
+            ToTensor(),
+            Normalize((0.5,), (0.5,)),
+        ])
 
     def apply_transforms(batch):
         """

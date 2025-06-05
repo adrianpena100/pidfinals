@@ -2,6 +2,8 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import csv
 
+eval_rounds, accuracies, eval_losses = [], [], []
+
 rounds, losses, P_vals, I_vals, D_vals, pid_vals = [], [], [], [], [], []
 attack_rounds = set()
 
@@ -25,6 +27,17 @@ with open("pid_log.csv", "r") as f:
         I_vals.append(float(row["I"]))
         D_vals.append(float(row["D"]))
         pid_vals.append(float(row["pid_output"]))
+
+# Load evaluation metrics
+try:
+    with open("eval_log.csv", "r") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            eval_rounds.append(int(row["round"]))
+            accuracies.append(float(row["accuracy"]))
+            eval_losses.append(float(row["loss"]))
+except FileNotFoundError:
+    print("eval_log.csv not found")
 
 # Plot results
 plt.figure(figsize=(12, 6))
@@ -50,3 +63,15 @@ plt.xticks(range(min(rounds), max(rounds) + 1))
 plt.tight_layout()
 plt.savefig("pid_plot_with_attacks.png")
 plt.show()
+
+# Plot evaluation accuracy
+if eval_rounds:
+    plt.figure(figsize=(8, 4))
+    plt.plot(eval_rounds, accuracies, marker="o")
+    plt.xlabel("Round")
+    plt.ylabel("Accuracy")
+    plt.title("Evaluation Accuracy")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig("accuracy_plot.png")
+    plt.show()

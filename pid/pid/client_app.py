@@ -27,8 +27,9 @@ class FlowerClient(NumPyClient):
         set_weights(self.net, parameters)
         # If malicious, alter labels to simulate adversarial behavior
         if self.is_malicious:
+            num_classes = self.net.fc3.out_features
             for batch in self.trainloader:
-                batch["label"] = torch.remainder(batch["label"] + 5, 10)
+                batch["label"] = torch.remainder(batch["label"] + 5, num_classes)
 
         # Perform local training and retrieve training loss
         train_loss = train(self.net, self.trainloader, self.local_epochs, self.device)
@@ -55,8 +56,11 @@ class FlowerClient(NumPyClient):
 
 
 def client_fn(context: Context):
-    # Instantiate model
-    net = Net()
+    dataset = context.run_config.get("dataset", "cifar10")
+    if dataset == "femnist":
+        net = Net(input_channels=1, num_classes=62, img_size=28)
+    else:
+        net = Net(input_channels=3, num_classes=10, img_size=32)
     # Determine this client's data partition ID and total partitions
     partition_id = int(context.node_config["partition-id"])
     num_partitions = int(context.node_config["num-partitions"])
@@ -70,7 +74,7 @@ def client_fn(context: Context):
     ####################################################################
 
     # Load the partitioned train and validation data for this client
-    trainloader, valloader = load_data(partition_id, num_partitions)
+    trainloader, valloader = load_data(partition_id, num_partitions, dataset)
     # Return a FlowerClient wrapped as a Flower client application
     return FlowerClient(net, trainloader, valloader, local_epochs, is_malicious).to_client()
 

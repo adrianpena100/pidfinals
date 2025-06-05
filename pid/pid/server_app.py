@@ -32,6 +32,10 @@ class FedPIDAvg(FedAvg):
         # Initialize malicious rounds log with header
         with open(MALICIOUS_ROUNDS_LOG, "w") as f:
             f.write("round\n")
+        # Create evaluation log
+        with open("eval_log.csv", "w") as f:
+            writer = csv.writer(f)
+            writer.writerow(["round", "accuracy", "loss"])
 
     def aggregate_fit(self, server_round, results, failures):
         """
@@ -103,6 +107,19 @@ class FedPIDAvg(FedAvg):
         # Convert back to Flower Parameters and return
         return ndarrays_to_parameters(aggregated), {}
 
+    def aggregate_evaluate(self, server_round, results, failures):
+        agg = super().aggregate_evaluate(server_round, results, failures)
+        if not results:
+            return agg
+        accuracies = [res.metrics.get("accuracy", 0.0) for _, res in results]
+        losses = [res.loss for _, res in results]
+        avg_acc = float(np.mean(accuracies))
+        avg_loss = float(np.mean(losses))
+        with open("eval_log.csv", "a") as f:
+            writer = csv.writer(f)
+            writer.writerow([server_round, avg_acc, avg_loss])
+        return agg
+
 # Server-side function to configure and return Flower server components
 
 def server_fn(context: Context):
@@ -119,12 +136,15 @@ def server_fn(context: Context):
     # Extract server run configuration from context
     num_rounds = context.run_config["num-server-rounds"]
     fraction_fit = context.run_config["fraction-fit"]
-    # Initialize model weights for first round
-    init_params = ndarrays_to_parameters(get_weights(Net()))
+    dataset = context.run_config.get("dataset", "cifar10")
+    if dataset == "femnist":
+        init_params = ndarrays_to_parameters(get_weights(Net(1, 62, 28)))
+    else:
+        init_params = ndarrays_to_parameters(get_weights(Net(3, 10, 32)))
 
     # on_fit_config_fn allows passing metadata (e.g. round index) to clients
     def on_fit_config_fn(rnd):
-        return {"server_round": rnd}
+        return {"server_round": rnd, "dataset": dataset}
 
     # Instantiate the custom PID federated strategy
     strategy = FedPIDAvg(
