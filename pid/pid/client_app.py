@@ -66,7 +66,7 @@ def client_fn(context: Context):
     ###################################################################
     #### CHANGE TO FALSE IF YOU WANT TO TURN OFF MALICIOUS CLIENTS ####
     #is_malicious = False
-    is_malicious = partition_id < 2  # First two clients simulate malicious behavior
+    is_malicious = partition_id < 3 # First two clients simulate malicious behavior
     ####################################################################
 
     # Load the partitioned train and validation data for this client

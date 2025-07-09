@@ -26,8 +26,8 @@ clientapp = "pid.client_app:app"
 
 [tool.flwr.app.config]
 num-server-rounds = 30
-fraction-fit = 0.5
-local-epochs = 1
+fraction-fit = 1.0
+local-epochs = 3
 
 [tool.flwr.federations]
 default = "local-simulation"

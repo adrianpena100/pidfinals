@@ -2,10 +2,12 @@ from flwr.common import Context, ndarrays_to_parameters, parameters_to_ndarrays 
 from flwr.server import ServerApp, ServerAppComponents, ServerConfig      # Flower server application and configuration
 from flwr.server.strategy import FedAvg                                    # Base FedAvg strategy to extend
 from flwr.server.strategy.aggregate import aggregate                        # Helper to aggregate weighted updates
-from pid.task import Net, get_weights                                       # User-defined model and weight utilities
+from pid.task import Net, get_weights, load_data                           # User-defined model and weight utilities
 import numpy as np                                                           # Numerical operations (e.g., mean)
 import csv                                                                   # CSV logging for PID outputs and malicious rounds
 import os                                                                    # OS utilities (file existence checks)
+from sklearn.metrics import accuracy_score, recall_score, precision_score
+import torch
 
 # Filename for logging rounds detected as malicious
 MALICIOUS_ROUNDS_LOG = "malicious_rounds.txt"
@@ -24,6 +26,7 @@ class FedPIDAvg(FedAvg):
         # State for integral and derivative calculations
         self.integral = 0.0      # Cumulative sum of past errors
         self.prev_error = 0.0    # Previous error for derivative term
+        self.prev_losses = []     # Store previous losses for trend analysis
 
         # Create/overwrite PID log file with header row
         with open("pid_log.csv", "w") as f:
@@ -36,14 +39,7 @@ class FedPIDAvg(FedAvg):
     def aggregate_fit(self, server_round, results, failures):
         """
         Aggregate client updates with PID-weighting and detect malicious rounds.
-
-        Args:
-            server_round: Current federated learning round index
-            results: List of (client_id, FitRes) tuples containing updates and metrics
-            failures: List of failures (ignored here)
-
-        Returns:
-            A tuple (Parameters, Dict) for new global model and empty metrics dict
+        Now includes exclusion (outlier filtering) to remove the most suspicious client update.
         """
         # Return early if no results
         if not results:
@@ -65,6 +61,7 @@ class FedPIDAvg(FedAvg):
         I = self.Ki * self.integral                   # Integral term
         D = self.Kd * derivative                      # Derivative term
         pid_output = P + I + D                        # Combined PID output as weight
+        pid_output = max(min(pid_output, 1.1), 0.9)
 
         # Log PID data for this round
         with open("pid_log.csv", "a") as f:
@@ -74,23 +71,18 @@ class FedPIDAvg(FedAvg):
         weighted_results = []    # List to store (ndarrays, weight) for aggregation
         attack_detected = False  # Flag to record if any malicious client update
 
-        # Process each client's update
-        for cid, res in results:
-            # Use PID output as the weight for this client's update
-            weight = pid_output
-            # Convert Parameters object to numpy arrays
+        for idx, (cid, res) in enumerate(results):
+            # Combine trust weight with PID output for adaptive scaling
+            weight = pid_output 
             res_ndarrays = parameters_to_ndarrays(res.parameters)
-
+            # Existing malicious client logic (for logging/experiments)
             #####################
             ####################################################
             #### COMMENT THIS OUT FOR NON MALICIOUS ############
             if res.metrics.get("malicious"):            # If client reported as malicious
-                # Invert and amplify malicious updates to penalize them
                 res_ndarrays = [w * -5.0 for w in res_ndarrays]
                 attack_detected = True
             ####################################################
-
-            # Append weighted update for aggregation
             weighted_results.append((res_ndarrays, weight))
 
         # If any attack was detected this round, log the round number
@@ -98,10 +90,37 @@ class FedPIDAvg(FedAvg):
             with open(MALICIOUS_ROUNDS_LOG, "a") as f:
                 f.write(f"{server_round}\n")
 
-        # Aggregate all weighted client updates into final global model parameters
-        aggregated = aggregate(weighted_results)
-        # Convert back to Flower Parameters and return
-        return ndarrays_to_parameters(aggregated), {}
+        # --- Trimmed mean + trust weighting aggregation for robustness ---
+        # Collect all client updates as flat arrays
+        client_updates = [parameters_to_ndarrays(res.parameters) for _, res in results]
+        flat_updates = [np.concatenate([w.flatten() for w in upd]) for upd in client_updates]
+        updates_matrix = np.stack(flat_updates)
+        # Compute distances to the mean
+        mean_update = np.mean(updates_matrix, axis=0)
+        distances = np.linalg.norm(updates_matrix - mean_update, axis=1)
+        # Set k for trimmed mean (number of outliers to trim from each end)
+        k = 3  # Adjust based on number of malicious clients
+        # Sort indices by distance
+        sorted_indices = np.argsort(distances)
+        # Keep only the middle updates (trim k from each end)
+        trimmed_indices = sorted_indices[k:len(sorted_indices)-k]
+        trimmed_updates = updates_matrix[trimmed_indices]
+        trimmed_distances = distances[trimmed_indices]
+        # Compute trust weights (inverse squared distance)
+        epsilon = 1e-6
+        trust_weights = 1 / (trimmed_distances**2 + epsilon)
+        trust_weights = trust_weights / np.sum(trust_weights)  # Normalize
+        # Compute the trust-weighted mean
+        weighted_mean_update = np.average(trimmed_updates, axis=0, weights=trust_weights)
+        # Apply PID scaling to the trust-weighted trimmed mean
+        scaled_update = pid_output * weighted_mean_update
+        # Convert back to original shape (list of arrays per layer)
+        ref_shapes = [w.shape for w in client_updates[0]]
+        split_indices = np.cumsum([np.prod(s) for s in ref_shapes])[:-1]
+        split_arrays = np.split(scaled_update, split_indices)
+        reshaped_arrays = [arr.reshape(shape) for arr, shape in zip(split_arrays, ref_shapes)]
+        # Return the scaled, robust aggregated update
+        return ndarrays_to_parameters(reshaped_arrays), {}
 
 # Server-side function to configure and return Flower server components
 
@@ -145,3 +164,50 @@ def server_fn(context: Context):
 
 # Launch the Flower server application using the defined server_fn
 app = ServerApp(server_fn=server_fn)
+
+def evaluate_fn(server_round, parameters, config):
+    """
+    Custom evaluation function for Flower strategies.
+    Evaluates the global model on a validation set and returns accuracy, recall, and precision.
+    Handles empty validation sets gracefully.
+    Accepts both Flower Parameters objects and lists of ndarrays.
+    Uses set_weights to avoid state_dict mismatches.
+    Handles batch dicts and ensures only Tensor is passed to model.
+    """
+    model = Net()
+    # Accept both Parameters objects and list of ndarrays
+    if isinstance(parameters, list):
+        weights = parameters
+    else:
+        weights = parameters_to_ndarrays(parameters)
+    # Use set_weights to load weights robustly
+    from pid.task import set_weights
+    set_weights(model, weights)
+    # Load validation data
+    _, valloader = load_data(0, 1)
+    y_true, y_pred = [], []
+    model.eval()
+    with torch.no_grad():
+        for batch in valloader:
+            # Handle both dict and tuple batch
+            if isinstance(batch, dict):
+                x = batch["img"]
+                y = batch["label"]
+            elif isinstance(batch, (tuple, list)) and len(batch) == 2:
+                x, y = batch
+            else:
+                raise ValueError(f"Unexpected batch type: {type(batch)}")
+            # Ensure data is on the same device as the model (if needed)
+            if hasattr(model, 'device'):
+                x = x.to(model.device)
+            outputs = model(x)
+            preds = outputs.argmax(dim=1)
+            y_true.extend(y.cpu().numpy())
+            y_pred.extend(preds.cpu().numpy())
+    if len(y_true) == 0:
+        # Avoid division by zero if validation set is empty
+        return 0.0, {"accuracy": 0.0, "recall": 0.0, "precision": 0.0}
+    acc = accuracy_score(y_true, y_pred)
+    rec = recall_score(y_true, y_pred, average='macro', zero_division=0)
+    prec = precision_score(y_true, y_pred, average='macro', zero_division=0)
+    return 0.0, {"accuracy": acc, "recall": rec, "precision": prec}
