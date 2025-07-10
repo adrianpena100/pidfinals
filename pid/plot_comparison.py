@@ -1,11 +1,12 @@
 import matplotlib.pyplot as plt
 import pandas as pd
 import os
+from matplotlib.ticker import ScalarFormatter
 
 # Strategies and their colors for plotting
 strategies = {
     "FedAvg": "black",
-    "FedPIDAvg_default": "blue",
+    #"FedPIDAvg_default": "blue",
     "FedPIDAvg_tuned": "red",
     "Krum": "green",
     "Bulyan": "orange",
@@ -29,10 +30,9 @@ for name, color in strategies.items():
         print(f"Warning: {fname} not found, skipping.")
 if not plotted_any:
     print("No data was plotted. Please check that your *_log.csv files exist and contain 'round' and 'loss' columns.")
-plt.yscale("log")
 plt.xlabel("Communication Round", fontsize=14)
 plt.ylabel("Loss", fontsize=14)
-plt.title("Loss vs Communication Round (Log Scale)", fontsize=16)
+plt.title("Loss vs Communication Round", fontsize=16)
 plt.grid(True, which="both", ls=":", lw=0.7)
 plt.legend(fontsize=12)
 plt.tight_layout()
@@ -57,6 +57,7 @@ if not plotted_any:
     print("No accuracy data was plotted. Please check that your *_log.csv files exist and contain 'round' and 'accuracy' columns.")
 plt.xlabel("Communication Round", fontsize=14)
 plt.ylabel("Accuracy", fontsize=14)
+plt.ylim(0, 1)
 plt.title("Accuracy vs Communication Round", fontsize=16)
 plt.grid(True, which="both", ls=":", lw=0.7)
 plt.legend(fontsize=12)
@@ -82,6 +83,7 @@ if not plotted_any:
     print("No recall data was plotted. Please check that your *_log.csv files exist and contain 'round' and 'recall' columns.")
 plt.xlabel("Communication Round", fontsize=14)
 plt.ylabel("Recall", fontsize=14)
+plt.ylim(0, 1)
 plt.title("Recall vs Communication Round", fontsize=16)
 plt.grid(True, which="both", ls=":", lw=0.7)
 plt.legend(fontsize=12)
@@ -107,6 +109,7 @@ if not plotted_any:
     print("No precision data was plotted. Please check that your *_log.csv files exist and contain 'round' and 'precision' columns.")
 plt.xlabel("Communication Round", fontsize=14)
 plt.ylabel("Precision", fontsize=14)
+plt.ylim(0, 1)
 plt.title("Precision vs Communication Round", fontsize=16)
 plt.grid(True, which="both", ls=":", lw=0.7)
 plt.legend(fontsize=12)

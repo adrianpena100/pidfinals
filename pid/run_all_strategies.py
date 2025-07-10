@@ -12,7 +12,7 @@ import os
 # Number of clients and tolerated malicious clients
 NUM_CLIENTS = 30
 NUM_ROUNDS = 30
-NUM_MALCIOUS_CLIENTS = 3
+NUM_MALCIOUS_CLIENTS = 0
 
 # Define strategies to compare
 STRATEGIES = {
@@ -23,14 +23,14 @@ STRATEGIES = {
         evaluate_fn=evaluate_fn,
         initial_parameters=ndarrays_to_parameters(get_weights(Net())),
     ),
-    "FedPIDAvg_default": lambda: FedPIDAvg(
-        Kp=0.1, Ki=0.01, Kd=0.05,
-        fraction_fit=1.0,
-        fraction_evaluate=1.0,
-        min_available_clients=2,
-        evaluate_fn=evaluate_fn,
-        initial_parameters=ndarrays_to_parameters(get_weights(Net())),
-    ),
+    #  "FedPIDAvg_default": lambda: FedPIDAvg(
+    #     Kp=0.1, Ki=0.01, Kd=0.05,
+    #     fraction_fit=1.0,
+    #     fraction_evaluate=1.0,
+    #     min_available_clients=2,
+    #     evaluate_fn=evaluate_fn,
+    #     initial_parameters=ndarrays_to_parameters(get_weights(Net())),
+    # ),
     "FedPIDAvg_tuned": None,  # Will be set below if best_pid.txt exists
     "Krum": lambda: Krum(
         fraction_fit=1.0,

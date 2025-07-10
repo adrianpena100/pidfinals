@@ -3,6 +3,8 @@ from flwr.client import ClientApp, NumPyClient  # Flower client interfaces
 from flwr.common import Context  # Flower context for client configuration
 from pid.task import Net, get_weights, load_data, set_weights, test, train  # Model and data utilities
 
+NUM_MALICIOUS_CLIENTS = 0  # Number of clients simulating malicious behavior
+
 class FlowerClient(NumPyClient):
     """
     Custom Flower NumPyClient that trains and evaluates a PyTorch model.
@@ -25,21 +27,23 @@ class FlowerClient(NumPyClient):
         """
         # Update model weights to global parameters received from server
         set_weights(self.net, parameters)
-        # If malicious, alter labels to simulate adversarial behavior
+        # If malicious, alter labels to simulate adversarial behavior in training
         if self.is_malicious:
             for batch in self.trainloader:
                 batch["label"] = torch.remainder(batch["label"] + 5, 10)
 
         # Perform local training and retrieve training loss
         train_loss = train(self.net, self.trainloader, self.local_epochs, self.device)
-        # Return updated weights, dataset size, and metrics (including malicious flag)
+        # Extract updated weights
+        new_weights = get_weights(self.net)
+        # POISON the weights if this client is malicious
+        if self.is_malicious:
+            new_weights = [w * -5.0 for w in new_weights]
+        # Return (possibly poisoned) weights, dataset size, and metrics
         return (
-            get_weights(self.net),  # Weights as numpy arrays
-            len(self.trainloader.dataset),  # Number of training samples
-            {
-                "train_loss": train_loss,  # Report training loss
-                "malicious": self.is_malicious,  # Indicate if this client is malicious
-            },
+            new_weights,
+            len(self.trainloader.dataset),
+            {"train_loss": train_loss, "malicious": self.is_malicious},
         )
 
     def evaluate(self, parameters, config):
@@ -66,7 +70,7 @@ def client_fn(context: Context):
     ###################################################################
     #### CHANGE TO FALSE IF YOU WANT TO TURN OFF MALICIOUS CLIENTS ####
     #is_malicious = False
-    is_malicious = partition_id < 3 # First two clients simulate malicious behavior
+    is_malicious = partition_id < NUM_MALICIOUS_CLIENTS # First two clients simulate malicious behavior
     ####################################################################
 
     # Load the partitioned train and validation data for this client

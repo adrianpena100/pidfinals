@@ -11,22 +11,24 @@ import torch
 
 # Filename for logging rounds detected as malicious
 MALICIOUS_ROUNDS_LOG = "malicious_rounds.txt"
+NUM_MALICIOUS_CLIENTS = 0  # Number of clients to simulate as malicious
 
 class FedPIDAvg(FedAvg):
     """
     Custom federated strategy that applies a PID controller to adjust client update weights.
     """
-    def __init__(self, Kp=0.1, Ki=0.01, Kd=0.05, **kwargs):
+    def __init__(self, Kp=0.1, Ki=0.01, Kd=0.05, integral_max=10.0, **kwargs):
         # Initialize FedAvg with same kwargs (e.g., fraction_fit, initial_parameters)
         super().__init__(**kwargs)
         # PID gain coefficients
         self.Kp = Kp  # Proportional gain
         self.Ki = Ki  # Integral gain
         self.Kd = Kd  # Derivative gain
-        # State for integral and derivative calculations
-        self.integral = 0.0      # Cumulative sum of past errors
-        self.prev_error = 0.0    # Previous error for derivative term
-        self.prev_losses = []     # Store previous losses for trend analysis
+        self.integral_max = integral_max  # Anti-windup clamp limit
+        # State for PID calculations
+        self.integral = 0.0
+        self.prev_error = 0.0
+        self.prev_loss = None
 
         # Create/overwrite PID log file with header row
         with open("pid_log.csv", "w") as f:
@@ -50,30 +52,38 @@ class FedPIDAvg(FedAvg):
         # Compute average loss across clients
         avg_loss = np.mean(losses)
 
-        # PID error terms calculation
-        error = avg_loss                              # Current error = average loss
-        derivative = error - self.prev_error          # Change in error since last round
-        self.integral += error                        # Accumulate error over time
-        self.prev_error = error                       # Update prev_error for next round
-
-        # Compute PID components
-        P = self.Kp * error                           # Proportional term
-        I = self.Ki * self.integral                   # Integral term
-        D = self.Kd * derivative                      # Derivative term
-        pid_output = P + I + D                        # Combined PID output as weight
-        pid_output = max(min(pid_output, 1.1), 0.9)
+        # Initialize prev_loss on first round
+        if self.prev_loss is None:
+            self.prev_loss = avg_loss
+        # PID error calculation (positive if loss decreased)
+        error = self.prev_loss - avg_loss
+        # Integral with anti-windup
+        self.integral = max(-self.integral_max, min(self.integral_max, self.integral + error))
+        # Derivative term
+        derivative = error - self.prev_error
+        # PID components
+        P = self.Kp * error
+        I = self.Ki * self.integral
+        D = self.Kd * derivative
+        # Compute PID term
+        pid_term = P + I + D
+        # Scaling factor clamped to [0,1]
+        scaling = max(0.0, min(1.0, 1.0 + pid_term))
+        # Update state
+        self.prev_error = error
+        self.prev_loss = avg_loss
 
         # Log PID data for this round
         with open("pid_log.csv", "a") as f:
             writer = csv.writer(f)
-            writer.writerow([server_round, avg_loss, P, I, D, pid_output])
+            writer.writerow([server_round, avg_loss, P, I, D, scaling])
 
         weighted_results = []    # List to store (ndarrays, weight) for aggregation
         attack_detected = False  # Flag to record if any malicious client update
 
         for idx, (cid, res) in enumerate(results):
             # Combine trust weight with PID output for adaptive scaling
-            weight = pid_output 
+            weight = scaling
             res_ndarrays = parameters_to_ndarrays(res.parameters)
             # Existing malicious client logic (for logging/experiments)
             #####################
@@ -99,7 +109,7 @@ class FedPIDAvg(FedAvg):
         mean_update = np.mean(updates_matrix, axis=0)
         distances = np.linalg.norm(updates_matrix - mean_update, axis=1)
         # Set k for trimmed mean (number of outliers to trim from each end)
-        k = 3  # Adjust based on number of malicious clients
+        k = NUM_MALICIOUS_CLIENTS  # Adjust based on number of malicious clients
         # Sort indices by distance
         sorted_indices = np.argsort(distances)
         # Keep only the middle updates (trim k from each end)
@@ -113,10 +123,12 @@ class FedPIDAvg(FedAvg):
         # Compute the trust-weighted mean
         weighted_mean_update = np.average(trimmed_updates, axis=0, weights=trust_weights)
         # Apply PID scaling to the trust-weighted trimmed mean
-        scaled_update = pid_output * weighted_mean_update
+        scaled_update = scaling * weighted_mean_update
         # Convert back to original shape (list of arrays per layer)
         ref_shapes = [w.shape for w in client_updates[0]]
         split_indices = np.cumsum([np.prod(s) for s in ref_shapes])[:-1]
+        # Ensure indices are Python ints for numpy.split
+        split_indices = [int(idx) for idx in split_indices]
         split_arrays = np.split(scaled_update, split_indices)
         reshaped_arrays = [arr.reshape(shape) for arr, shape in zip(split_arrays, ref_shapes)]
         # Return the scaled, robust aggregated update
