@@ -11,7 +11,7 @@ import torch
 
 # Filename for logging rounds detected as malicious
 MALICIOUS_ROUNDS_LOG = "malicious_rounds.txt"
-NUM_MALICIOUS_CLIENTS = 0  # Number of clients to simulate as malicious
+NUM_MALICIOUS_CLIENTS = 6  # Number of clients to simulate as malicious
 
 class FedPIDAvg(FedAvg):
     """

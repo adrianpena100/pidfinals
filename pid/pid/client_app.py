@@ -3,7 +3,7 @@ from flwr.client import ClientApp, NumPyClient  # Flower client interfaces
 from flwr.common import Context  # Flower context for client configuration
 from pid.task import Net, get_weights, load_data, set_weights, test, train  # Model and data utilities
 
-NUM_MALICIOUS_CLIENTS = 0  # Number of clients simulating malicious behavior
+NUM_MALICIOUS_CLIENTS = 6  # Number of clients simulating malicious behavior
 
 class FlowerClient(NumPyClient):
     """

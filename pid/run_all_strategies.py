@@ -12,7 +12,7 @@ import os
 # Number of clients and tolerated malicious clients
 NUM_CLIENTS = 30
 NUM_ROUNDS = 30
-NUM_MALCIOUS_CLIENTS = 0
+NUM_MALCIOUS_CLIENTS = 6
 
 # Define strategies to compare
 STRATEGIES = {

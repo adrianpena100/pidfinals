@@ -14,7 +14,7 @@ from flwr_datasets import FederatedDataset  # Load federated CIFAR-10 dataset
 from flwr_datasets.partitioner import IidPartitioner  # IID partitioner for data splitting
 
 # Image transformation utilities
-from torchvision.transforms import Compose, Normalize, ToTensor
+from torchvision.transforms import Compose, Normalize, ToTensor, RandomCrop, RandomHorizontalFlip
 
 # Global cache for the federated dataset to avoid repeated downloads
 fds = None  # Cache FederatedDataset instance across calls
@@ -22,40 +22,45 @@ fds = None  # Cache FederatedDataset instance across calls
 
 class Net(nn.Module):
     """
-    Simple CNN model adapted from 'PyTorch: A 60 Minute Blitz'.
+    Stronger CNN model for CIFAR-10.
     Architecture:
-      - Conv2d -> ReLU -> MaxPool
-      - Conv2d -> ReLU -> MaxPool
-      - Flatten -> FC -> ReLU -> FC -> ReLU -> FC
+      - Conv2d -> BatchNorm -> ReLU -> MaxPool
+      - Conv2d -> BatchNorm -> ReLU -> MaxPool
+      - Conv2d -> BatchNorm -> ReLU -> MaxPool
+      - Flatten -> Dropout -> FC -> ReLU -> FC
     Output for 10 classes.
     """
     def __init__(self):
         super(Net, self).__init__()
-        # First convolutional layer: in_channels=3 (RGB), out_channels=6, kernel_size=5
-        self.conv1 = nn.Conv2d(3, 6, 5)
-        # Max-pooling layer with 2x2 window
+        # First convolutional block: 3 input channels to 32 output channels
+        self.conv1 = nn.Conv2d(3, 32, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(32)
+        # Second convolutional block: 32 to 64 output channels
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(64)
+        # Third convolutional block: 64 to 128 output channels
+        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
+        self.bn3 = nn.BatchNorm2d(128)
+        # Max-pooling and dropout
         self.pool = nn.MaxPool2d(2, 2)
-        # Second convolutional layer: in_channels=6, out_channels=16, kernel_size=5
-        self.conv2 = nn.Conv2d(6, 16, 5)
+        self.dropout = nn.Dropout(0.25)
         # Fully connected layers
-        # Input features = 16 * 5 * 5 after two poolings on 32x32 input
-        self.fc1 = nn.Linear(16 * 5 * 5, 120)
-        self.fc2 = nn.Linear(120, 84)
-        # Final output layer for 10 classes
-        self.fc3 = nn.Linear(84, 10)
+        self.fc1 = nn.Linear(128 * 4 * 4, 256)
+        self.fc2 = nn.Linear(256, 10)
 
     def forward(self, x):
-        # Pass input through conv => ReLU => pool
-        x = self.pool(F.relu(self.conv1(x)))
-        # Pass through second conv => ReLU => pool
-        x = self.pool(F.relu(self.conv2(x)))
-        # Flatten tensor to (batch_size, features)
-        x = x.view(-1, 16 * 5 * 5)
-        # Fully connected layers with ReLU activations
+        # Pass input through first conv block
+        x = self.pool(F.relu(self.bn1(self.conv1(x))))
+        # Second conv block
+        x = self.pool(F.relu(self.bn2(self.conv2(x))))
+        # Third conv block
+        x = self.pool(F.relu(self.bn3(self.conv3(x))))
+        # Flatten tensor
+        x = x.view(-1, 128 * 4 * 4)
+        # Dropout and FC layers
+        x = self.dropout(x)
         x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        # Return raw logits for final classification
-        return self.fc3(x)
+        return self.fc2(x)
 
 
 def load_data(partition_id: int, num_partitions: int):
@@ -82,10 +87,12 @@ def load_data(partition_id: int, num_partitions: int):
     # Split into train/test
     partition_train_test = partition.train_test_split(test_size=0.2, seed=42)
 
-    # Define transformations: convert to tensor and normalize to [-1,1]
+    # Define transformations: random crop, flip, convert to tensor, and normalize to [-1,1]
     pytorch_transforms = Compose([
-        ToTensor(),
-        Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+        RandomCrop(32, padding=4),              # Randomly crop image with padding
+        RandomHorizontalFlip(),                 # Flip image horizontally 50% of the time
+        ToTensor(),                             # Convert image to PyTorch tensor
+        Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),  # Normalize RGB channels to [-1, 1]
     ])
 
     def apply_transforms(batch):
