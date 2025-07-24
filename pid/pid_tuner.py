@@ -10,9 +10,9 @@ from pid.server_app import FedPIDAvg  # Custom PID-based aggregation strategy
 
 def objective(trial):
     # Suggest PID hyperparameters for this trial
-    Kp = trial.suggest_float("Kp", 0.0, 0.03)  # Proportional gain
-    Ki = trial.suggest_float("Ki", 0.0, 0.03)   # Integral gain
-    Kd = trial.suggest_float("Kd", 0.0, 0.01)   # Derivative gain
+    Kp = trial.suggest_float("Kp", 0.0, 0.1)  # Proportional gain
+    Ki = trial.suggest_float("Ki", 0.0, 0.005)   # Integral gain
+    Kd = trial.suggest_float("Kd", 0.0, 0.0)   # Derivative gain
 
     # Obtain initial global model parameters from a fresh network
     initial_parameters = ndarrays_to_parameters(get_weights(Net()))

@@ -6,9 +6,9 @@ from matplotlib.ticker import ScalarFormatter
 # Strategies and their colors for plotting
 strategies = {
     "FedAvg": "black",
-    #"FedPIDAvg_default": "blue",
+    # "FedPIDAvg_default": "blue",
     "FedPIDAvg_tuned": "red",
-    "Krum": "green",
+    "Multi-Krum": "green",
     "Bulyan": "orange",
     # Add more as needed
 }
@@ -36,7 +36,7 @@ plt.title("Loss vs Communication Round", fontsize=16)
 plt.grid(True, which="both", ls=":", lw=0.7)
 plt.legend(fontsize=12)
 plt.tight_layout()
-plt.savefig("comparison_plot.png")
+plt.savefig("comparison_loss.png")
 plt.show()
 
 # --- Plot Accuracy ---

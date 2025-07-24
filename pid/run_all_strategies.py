@@ -16,60 +16,61 @@ NUM_MALCIOUS_CLIENTS = 6
 
 # Define strategies to compare
 STRATEGIES = {
-    "FedAvg": lambda: FedAvg(
-        fraction_fit=1.0,
-        fraction_evaluate=1.0,
-        min_available_clients=2,
-        evaluate_fn=evaluate_fn,
-        initial_parameters=ndarrays_to_parameters(get_weights(Net())),
-    ),
-    #  "FedPIDAvg_default": lambda: FedPIDAvg(
-    #     Kp=0.1, Ki=0.01, Kd=0.05,
+    # "FedAvg": lambda: FedAvg(
     #     fraction_fit=1.0,
     #     fraction_evaluate=1.0,
     #     min_available_clients=2,
     #     evaluate_fn=evaluate_fn,
     #     initial_parameters=ndarrays_to_parameters(get_weights(Net())),
     # ),
-    "FedPIDAvg_tuned": None,  # Will be set below if best_pid.txt exists
-    "Krum": lambda: Krum(
-        fraction_fit=1.0,
+    # #  "FedPIDAvg_default": lambda: FedPIDAvg(
+    # #     Kp=0.45, Ki=0.45, Kd=0.1,
+    # #     fraction_fit=1.0,
+    # #     fraction_evaluate=1.0,
+    # #     min_available_clients=2,
+    # #     evaluate_fn=evaluate_fn,
+    # #     initial_parameters=ndarrays_to_parameters(get_weights(Net())),
+    # # ),
+    # "FedPIDAvg_tuned": None,  # Will be set below if best_pid.txt exists
+    "Multi-Krum": lambda: Krum(
+        fraction_fit=0.8,
         fraction_evaluate=1.0,
         min_available_clients=2,
         num_malicious_clients=NUM_MALCIOUS_CLIENTS,
         evaluate_fn=evaluate_fn,
+        num_clients_to_keep=14, # Server learning rate (weaker than default 1.0)
         initial_parameters=ndarrays_to_parameters(get_weights(Net())),
     ),
-    "Bulyan": lambda: Bulyan(
-        fraction_fit=1.0,
-        fraction_evaluate=1.0,
-        min_available_clients=2,
-        initial_parameters=ndarrays_to_parameters(get_weights(Net())),
-        num_malicious_clients=NUM_MALCIOUS_CLIENTS,
-        evaluate_fn=evaluate_fn,
-        to_keep=0,
-    ),
+    # "Bulyan": lambda: Bulyan(
+    #     fraction_fit=1.0,
+    #     fraction_evaluate=1.0,
+    #     min_available_clients=2,
+    #     initial_parameters=ndarrays_to_parameters(get_weights(Net())),
+    #     num_malicious_clients=NUM_MALCIOUS_CLIENTS,
+    #     evaluate_fn=evaluate_fn,
+    #     to_keep=0
+    # ),
 }
 
 # Try to load tuned PID params
-if os.path.exists("best_pid.txt"):
-    pid_params = {"Kp": 0.1, "Ki": 0.01, "Kd": 0.05}
-    with open("best_pid.txt") as f:
-        lines = f.readlines()
-        for line in lines[1:]:
-            k, v = line.strip().split(" = ")
-            pid_params[k] = float(v)
-    STRATEGIES["FedPIDAvg_tuned"] = lambda: FedPIDAvg(
-        Kp=pid_params["Kp"], Ki=pid_params["Ki"], Kd=pid_params["Kd"],
-        fraction_fit=1.0,
-        fraction_evaluate=1.0,
-        min_available_clients=2,
-        evaluate_fn=evaluate_fn,
-        initial_parameters=ndarrays_to_parameters(get_weights(Net())),
-    )
-else:
-    # Remove tuned strategy if no params found
-    STRATEGIES.pop("FedPIDAvg_tuned", None)
+# if os.path.exists("best_pid.txt"):
+#     pid_params = {"Kp": 0.1, "Ki": 0.01, "Kd": 0.05}
+#     with open("best_pid.txt") as f:
+#         lines = f.readlines()
+#         for line in lines[1:]:
+#             k, v = line.strip().split(" = ")
+#             pid_params[k] = float(v)
+#     STRATEGIES["FedPIDAvg_tuned"] = lambda: FedPIDAvg(
+#         Kp=pid_params["Kp"], Ki=pid_params["Ki"], Kd=pid_params["Kd"],
+#         fraction_fit=1.0,
+#         fraction_evaluate=1.0,
+#         min_available_clients=2,
+#         evaluate_fn=evaluate_fn,
+#         initial_parameters=ndarrays_to_parameters(get_weights(Net())),
+#     )
+# else:
+#     # Remove tuned strategy if no params found
+#     STRATEGIES.pop("FedPIDAvg_tuned", None)
 
 # Run each strategy
 for name, strategy_fn in STRATEGIES.items():
