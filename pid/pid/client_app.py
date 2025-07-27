@@ -1,14 +1,9 @@
 import torch  # PyTorch for tensor operations and model training
-import random  # Random number generation for client selection
 from flwr.client import ClientApp, NumPyClient  # Flower client interfaces
 from flwr.common import Context  # Flower context for client configuration
 from pid.task import Net, get_weights, load_data, set_weights, test, train  # Model and data utilities
 
-random.seed(42)  # For reproducibility
-# Define number of malicious clients simulating adversarial behavior
-NUM_CLIENTS = 30 # Total number of clients in the simulation
-NUM_MALICIOUS_CLIENTS = 0 # Number of clients simulating malicious behavior
-MALICIOUS_CLIENTS = random.sample(range(NUM_CLIENTS), NUM_MALICIOUS_CLIENTS)  # Randomly select malicious clients
+NUM_MALICIOUS_CLIENTS = 6  # Number of clients simulating malicious behavior
 
 class FlowerClient(NumPyClient):
     """
@@ -35,7 +30,7 @@ class FlowerClient(NumPyClient):
         # If malicious, alter labels to simulate adversarial behavior in training
         if self.is_malicious:
             for batch in self.trainloader:
-                batch["character"] = torch.remainder(batch["character"] + 5, 62)  # FEMNIST has 62 classes
+                batch["label"] = torch.remainder(batch["label"] + 5, 10)
 
         # Perform local training and retrieve training loss
         train_loss = train(self.net, self.trainloader, self.local_epochs, self.device)
@@ -75,7 +70,7 @@ def client_fn(context: Context):
     ###################################################################
     #### CHANGE TO FALSE IF YOU WANT TO TURN OFF MALICIOUS CLIENTS ####
     #is_malicious = False
-    is_malicious = partition_id in MALICIOUS_CLIENTS # First two clients simulate malicious behavior
+    is_malicious = partition_id < NUM_MALICIOUS_CLIENTS # First two clients simulate malicious behavior
     ####################################################################
 
     # Load the partitioned train and validation data for this client

@@ -222,4 +222,20 @@ def evaluate_fn(server_round, parameters, config):
     acc = accuracy_score(y_true, y_pred)
     rec = recall_score(y_true, y_pred, average='macro', zero_division=0)
     prec = precision_score(y_true, y_pred, average='macro', zero_division=0)
-    return 0.0, {"accuracy": acc, "recall": rec, "precision": prec}
+    # Compute confusion matrix for FPR and TNR
+    from sklearn.metrics import confusion_matrix
+    labels = sorted(set(y_true))
+    cm = confusion_matrix(y_true, y_pred, labels=labels)
+    tn_list, fp_list = [], []
+    total = cm.sum()
+    for i in range(len(labels)):
+        tp = cm[i, i]
+        fn = cm[i, :].sum() - tp
+        fp_i = cm[:, i].sum() - tp
+        tn_i = total - (tp + fn + fp_i)
+        tn_list.append(tn_i)
+        fp_list.append(fp_i)
+    # Macro-average TNR and FPR
+    tnr = float(sum(tn_i / (tn_i + fp_i + 1e-10) for tn_i, fp_i in zip(tn_list, fp_list)) / len(labels))
+    fpr = float(sum(fp_i / (fp_i + tn_i + 1e-10) for tn_i, fp_i in zip(tn_list, fp_list)) / len(labels))
+    return 0.0, {"accuracy": acc, "recall": rec, "precision": prec, "fpr": fpr, "tnr": tnr}
