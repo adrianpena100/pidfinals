@@ -12,65 +12,65 @@ import os
 # Number of clients and tolerated malicious clients
 NUM_CLIENTS = 30
 NUM_ROUNDS = 30
-NUM_MALCIOUS_CLIENTS = 6
+NUM_MALCIOUS_CLIENTS = 0
 
 # Define strategies to compare
 STRATEGIES = {
-    # "FedAvg": lambda: FedAvg(
+    "FedAvg": lambda: FedAvg(
+        fraction_fit=1.0,
+        fraction_evaluate=1.0,
+        min_available_clients=2,
+        evaluate_fn=evaluate_fn,
+        initial_parameters=ndarrays_to_parameters(get_weights(Net())),
+    ),
+    #  "FedPIDAvg_default": lambda: FedPIDAvg(
+    #     Kp=0.45, Ki=0.45, Kd=0.1,
     #     fraction_fit=1.0,
     #     fraction_evaluate=1.0,
     #     min_available_clients=2,
     #     evaluate_fn=evaluate_fn,
     #     initial_parameters=ndarrays_to_parameters(get_weights(Net())),
     # ),
-    # #  "FedPIDAvg_default": lambda: FedPIDAvg(
-    # #     Kp=0.45, Ki=0.45, Kd=0.1,
-    # #     fraction_fit=1.0,
-    # #     fraction_evaluate=1.0,
-    # #     min_available_clients=2,
-    # #     evaluate_fn=evaluate_fn,
-    # #     initial_parameters=ndarrays_to_parameters(get_weights(Net())),
-    # # ),
-    # "FedPIDAvg_tuned": None,  # Will be set below if best_pid.txt exists
+    "FedPIDAvg_tuned": None,  # Will be set below if best_pid.txt exists
     "Multi-Krum": lambda: Krum(
-        fraction_fit=0.8,
+        fraction_fit=1.0,
         fraction_evaluate=1.0,
         min_available_clients=2,
         num_malicious_clients=NUM_MALCIOUS_CLIENTS,
         evaluate_fn=evaluate_fn,
-        num_clients_to_keep=14, # Server learning rate (weaker than default 1.0)
+        num_clients_to_keep=NUM_CLIENTS - NUM_MALCIOUS_CLIENTS - 2,  # Keep all non-malicious clients
         initial_parameters=ndarrays_to_parameters(get_weights(Net())),
     ),
-    # "Bulyan": lambda: Bulyan(
-    #     fraction_fit=1.0,
-    #     fraction_evaluate=1.0,
-    #     min_available_clients=2,
-    #     initial_parameters=ndarrays_to_parameters(get_weights(Net())),
-    #     num_malicious_clients=NUM_MALCIOUS_CLIENTS,
-    #     evaluate_fn=evaluate_fn,
-    #     to_keep=0
-    # ),
+    "Bulyan": lambda: Bulyan(
+        fraction_fit=1.0,
+        fraction_evaluate=1.0,
+        min_available_clients=2,
+        initial_parameters=ndarrays_to_parameters(get_weights(Net())),
+        num_malicious_clients=NUM_MALCIOUS_CLIENTS,
+        evaluate_fn=evaluate_fn,
+        to_keep=0
+    ),
 }
 
-# Try to load tuned PID params
-# if os.path.exists("best_pid.txt"):
-#     pid_params = {"Kp": 0.1, "Ki": 0.01, "Kd": 0.05}
-#     with open("best_pid.txt") as f:
-#         lines = f.readlines()
-#         for line in lines[1:]:
-#             k, v = line.strip().split(" = ")
-#             pid_params[k] = float(v)
-#     STRATEGIES["FedPIDAvg_tuned"] = lambda: FedPIDAvg(
-#         Kp=pid_params["Kp"], Ki=pid_params["Ki"], Kd=pid_params["Kd"],
-#         fraction_fit=1.0,
-#         fraction_evaluate=1.0,
-#         min_available_clients=2,
-#         evaluate_fn=evaluate_fn,
-#         initial_parameters=ndarrays_to_parameters(get_weights(Net())),
-#     )
-# else:
-#     # Remove tuned strategy if no params found
-#     STRATEGIES.pop("FedPIDAvg_tuned", None)
+#Try to load tuned PID params
+if os.path.exists("best_pid.txt"):
+    pid_params = {"Kp": 0.1, "Ki": 0.01, "Kd": 0.05}
+    with open("best_pid.txt") as f:
+        lines = f.readlines()
+        for line in lines[1:]:
+            k, v = line.strip().split(" = ")
+            pid_params[k] = float(v)
+    STRATEGIES["FedPIDAvg_tuned"] = lambda: FedPIDAvg(
+        Kp=pid_params["Kp"], Ki=pid_params["Ki"], Kd=pid_params["Kd"],
+        fraction_fit=1.0,
+        fraction_evaluate=1.0,
+        min_available_clients=2,
+        evaluate_fn=evaluate_fn,
+        initial_parameters=ndarrays_to_parameters(get_weights(Net())),
+    )
+else:
+    # Remove tuned strategy if no params found
+    STRATEGIES.pop("FedPIDAvg_tuned", None)
 
 # Run each strategy
 for name, strategy_fn in STRATEGIES.items():
@@ -88,9 +88,9 @@ for name, strategy_fn in STRATEGIES.items():
     losses = [l for _, l in history.losses_distributed]
 
     # Extract metrics from metrics_centralized if available (preferred)
-    metrics = {"accuracy": {}, "recall": {}, "precision": {}}
+    metrics = {"accuracy": {}, "recall": {}, "precision": {}, "fpr": {}, "tnr": {}}
     if hasattr(history, "metrics_centralized") and history.metrics_centralized:
-        for metric_name in ["accuracy", "recall", "precision"]:
+        for metric_name in ["accuracy", "recall", "precision", "fpr", "tnr"]:
             metric_list = history.metrics_centralized.get(metric_name, [])
             for r, v in metric_list:
                 metrics[metric_name][r] = v
@@ -98,6 +98,8 @@ for name, strategy_fn in STRATEGIES.items():
     accuracies = [metrics["accuracy"].get(r, None) for r in rounds]
     recalls = [metrics["recall"].get(r, None) for r in rounds]
     precisions = [metrics["precision"].get(r, None) for r in rounds]
+    fprs = [metrics["fpr"].get(r, None) for r in rounds]
+    tnrs = [metrics["tnr"].get(r, None) for r in rounds]
 
     df = pd.DataFrame({
         "round": rounds,
@@ -105,6 +107,8 @@ for name, strategy_fn in STRATEGIES.items():
         "accuracy": accuracies,
         "recall": recalls,
         "precision": precisions,
+        "fpr": fprs,
+        "tnr": tnrs,
     })
     df.to_csv(f"{name}_log.csv", index=False)
     print(f"Saved {name}_log.csv")

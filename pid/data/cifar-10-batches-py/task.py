@@ -7,48 +7,33 @@ from collections import OrderedDict  # Preserve parameter order when reconstruct
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
 
 # Federated datasets and partitioning utilities
-from flwr_datasets import FederatedDataset
-from flwr_datasets.partitioner import NaturalIdPartitioner
+from flwr_datasets import FederatedDataset  # Load federated CIFAR-10 dataset
+from flwr_datasets.partitioner import IidPartitioner  # IID partitioner for data splitting
 
 # Image transformation utilities
-from torchvision.transforms import Compose, Normalize, ToTensor, RandomCrop, RandomHorizontalFlip, v2
+from torchvision.transforms import Compose, Normalize, ToTensor, RandomCrop, RandomHorizontalFlip
 
 # Global cache for the federated dataset to avoid repeated downloads
 fds = None  # Cache FederatedDataset instance across calls
 
 
-def batch_transform(batch):
-    """Apply transformations to a batch of FEMNIST data."""
-    # Define the image transformation pipeline using torchvision.transforms.v2
-    transform = v2.Compose(
-        [
-            v2.ToImage(),  # Convert PIL Image to PyTorch tensor
-            v2.ToDtype(torch.float32, scale=True),  # Scale to [0.0, 1.0]
-            v2.Normalize(mean=[0.5], std=[0.5]),  # Normalize to [-1.0, 1.0]
-        ]
-    )
-    # Apply the transform to each image in the 'image' list of the batch
-    batch["image"] = [transform(img) for img in batch["image"]]
-    return batch
-
-
 class Net(nn.Module):
     """
-    Stronger CNN model for FEMNIST.
+    Stronger CNN model for CIFAR-10.
     Architecture:
       - Conv2d -> BatchNorm -> ReLU -> MaxPool
       - Conv2d -> BatchNorm -> ReLU -> MaxPool
       - Conv2d -> BatchNorm -> ReLU -> MaxPool
       - Flatten -> Dropout -> FC -> ReLU -> FC
-    Output for 62 classes (0-9, A-Z, a-z).
+    Output for 10 classes.
     """
     def __init__(self):
         super(Net, self).__init__()
         # First convolutional block: 3 input channels to 32 output channels
-        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
+        self.conv1 = nn.Conv2d(3, 32, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm2d(32)
         # Second convolutional block: 32 to 64 output channels
         self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
@@ -60,8 +45,8 @@ class Net(nn.Module):
         self.pool = nn.MaxPool2d(2, 2)
         self.dropout = nn.Dropout(0.25)
         # Fully connected layers
-        self.fc1 = nn.Linear(128 * 3 * 3, 256)
-        self.fc2 = nn.Linear(256, 62)  # 62 classes for FEMNIST
+        self.fc1 = nn.Linear(128 * 4 * 4, 256)
+        self.fc2 = nn.Linear(256, 10)
 
     def forward(self, x):
         # Pass input through first conv block
@@ -71,7 +56,7 @@ class Net(nn.Module):
         # Third conv block
         x = self.pool(F.relu(self.bn3(self.conv3(x))))
         # Flatten tensor
-        x = x.view(-1, 128 * 3 * 3)
+        x = x.view(-1, 128 * 4 * 4)
         # Dropout and FC layers
         x = self.dropout(x)
         x = F.relu(self.fc1(x))
@@ -80,7 +65,7 @@ class Net(nn.Module):
 
 def load_data(partition_id: int, num_partitions: int):
     """
-    Load and partition FEMNIST data for a specific client.
+    Load and partition CIFAR-10 data for a specific client.
 
     Steps:
       1. Initialize FederatedDataset once (global cache).
@@ -92,31 +77,41 @@ def load_data(partition_id: int, num_partitions: int):
     global fds
     # Initialize dataset and partitioner on first call
     if fds is None:
-        # Define the partitioner
-        partitioner = NaturalIdPartitioner(partition_by="writer_id")
-        # Download and partition the dataset
-        fds = FederatedDataset(dataset="flwrlabs/femnist", partitioners={"train": partitioner})
+        partitioner = IidPartitioner(num_partitions=num_partitions)
+        fds = FederatedDataset(
+            dataset="uoft-cs/cifar10",
+            partitioners={"train": partitioner},
+        )
+    # Load specific client partition
+    partition = fds.load_partition(partition_id)
+    # Split into train/test
+    partition_train_test = partition.train_test_split(test_size=0.2, seed=42)
 
-    # Let's get the partition and wrap it in a DataLoader
-    # Note: FEMNIST is partitioned by writer_id, so partition_id (node_id) will map to a writer
-    partition = fds.load_partition(partition_id, "train")
-    # Apply transformation
-    partition = partition.with_transform(batch_transform)
+    # Define transformations: random crop, flip, convert to tensor, and normalize to [-1,1]
+    pytorch_transforms = Compose([
+        RandomCrop(32, padding=4),              # Randomly crop image with padding
+        RandomHorizontalFlip(),                 # Flip image horizontally 50% of the time
+        ToTensor(),                             # Convert image to PyTorch tensor
+        Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),  # Normalize RGB channels to [-1, 1]
+    ])
 
-    # Split into train/test (80% train, 20% test)
-    train_size = int(0.8 * len(partition))
-    test_size = len(partition) - train_size
-    train_partition, test_partition = random_split(
-        partition, [train_size, test_size],
-        generator=torch.Generator().manual_seed(42)  # Ensure reproducibility
+    def apply_transforms(batch):
+        """
+        Apply PyTorch transforms to each image in the batch.
+        """
+        batch["img"] = [pytorch_transforms(img) for img in batch["img"]]
+        return batch
+
+    # Attach transforms to data
+    partition_train_test = partition_train_test.with_transform(apply_transforms)
+    # Create DataLoaders
+    trainloader = DataLoader(
+        partition_train_test["train"], batch_size=32, shuffle=True
     )
-
-    # Wrap in DataLoaders
-    trainloader = DataLoader(train_partition, batch_size=32, shuffle=True)
-    testloader = DataLoader(test_partition, batch_size=32)
-
+    testloader = DataLoader(
+        partition_train_test["test"], batch_size=32
+    )
     return trainloader, testloader
-
 
 
 def train(net, trainloader, epochs, device):
@@ -134,11 +129,10 @@ def train(net, trainloader, epochs, device):
     running_loss = 0.0
     for _ in range(epochs):
         for batch in trainloader:
-            images = batch["image"].to(device)
-            labels = batch["character"].to(device)
+            images = batch["img"].to(device)
+            labels = batch["label"].to(device)
             optimizer.zero_grad()
-            outputs = net(images)
-            loss = criterion(outputs, labels)
+            loss = criterion(net(images), labels)
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
@@ -155,20 +149,19 @@ def test(net, testloader, device):
     - Returns (loss, accuracy).
     """
     net.to(device)
-    criterion = nn.CrossEntropyLoss().to(device)
-    correct, total, loss = 0, 0, 0.0
-    net.eval()
+    criterion = nn.CrossEntropyLoss()
+    correct, loss = 0, 0.0
     with torch.no_grad():
         for batch in testloader:
-            images = batch["image"].to(device)
-            labels = batch["character"].to(device)
+            images = batch["img"].to(device)
+            labels = batch["label"].to(device)
             outputs = net(images)
             loss += criterion(outputs, labels).item()
-            _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
-    accuracy = correct / total
-    return loss / len(testloader.dataset), accuracy
+            # Count correct predictions
+            correct += (torch.max(outputs.data, 1)[1] == labels).sum().item()
+    accuracy = correct / len(testloader.dataset)
+    loss = loss / len(testloader)
+    return loss, accuracy
 
 
 def get_weights(net):
