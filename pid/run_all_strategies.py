@@ -16,13 +16,13 @@ NUM_MALCIOUS_CLIENTS = 6
 
 # Define strategies to compare
 STRATEGIES = {
-    "FedAvg": lambda: FedAvg(
-        fraction_fit=1.0,
-        fraction_evaluate=1.0,
-        min_available_clients=2,
-        evaluate_fn=evaluate_fn,
-        initial_parameters=ndarrays_to_parameters(get_weights(Net())),
-    ),
+    # "FedAvg": lambda: FedAvg(
+    #     fraction_fit=1.0,
+    #     fraction_evaluate=1.0,
+    #     min_available_clients=2,
+    #     evaluate_fn=evaluate_fn,
+    #     initial_parameters=ndarrays_to_parameters(get_weights(Net())),
+    # ),
     #  "FedPIDAvg_default": lambda: FedPIDAvg(
     #     Kp=0.45, Ki=0.45, Kd=0.1,
     #     fraction_fit=1.0,
@@ -32,24 +32,24 @@ STRATEGIES = {
     #     initial_parameters=ndarrays_to_parameters(get_weights(Net())),
     # ),
     "FedPIDAvg_tuned": None,  # Will be set below if best_pid.txt exists
-    "Multi-Krum": lambda: Krum(
-        fraction_fit=1.0,
-        fraction_evaluate=1.0,
-        min_available_clients=2,
-        num_malicious_clients=NUM_MALCIOUS_CLIENTS,
-        evaluate_fn=evaluate_fn,
-        num_clients_to_keep=NUM_CLIENTS - NUM_MALCIOUS_CLIENTS - 2,  # Keep all non-malicious clients
-        initial_parameters=ndarrays_to_parameters(get_weights(Net())),
-    ),
-    "Bulyan": lambda: Bulyan(
-        fraction_fit=1.0,
-        fraction_evaluate=1.0,
-        min_available_clients=2,
-        initial_parameters=ndarrays_to_parameters(get_weights(Net())),
-        num_malicious_clients=NUM_MALCIOUS_CLIENTS,
-        evaluate_fn=evaluate_fn,
-        to_keep=0
-    ),
+    # "Multi-Krum": lambda: Krum(
+    #     fraction_fit=1.0,
+    #     fraction_evaluate=1.0,
+    #     min_available_clients=2,
+    #     num_malicious_clients=NUM_MALCIOUS_CLIENTS,
+    #     evaluate_fn=evaluate_fn,
+    #     num_clients_to_keep=NUM_CLIENTS - NUM_MALCIOUS_CLIENTS - 2,  # Keep all non-malicious clients
+    #     initial_parameters=ndarrays_to_parameters(get_weights(Net())),
+    # ),
+    # "Bulyan": lambda: Bulyan(
+    #     fraction_fit=1.0,
+    #     fraction_evaluate=1.0,
+    #     min_available_clients=2,
+    #     initial_parameters=ndarrays_to_parameters(get_weights(Net())),
+    #     num_malicious_clients=NUM_MALCIOUS_CLIENTS,
+    #     evaluate_fn=evaluate_fn,
+    #     to_keep=0
+    # ),
 }
 
 #Try to load tuned PID params

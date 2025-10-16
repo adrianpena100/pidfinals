@@ -1,20 +1,26 @@
 import torch  # PyTorch for tensor operations and model training
+import random  # Random number generation for client selection
 from flwr.client import ClientApp, NumPyClient  # Flower client interfaces
 from flwr.common import Context  # Flower context for client configuration
 from pid.task import Net, get_weights, load_data, set_weights, test, train  # Model and data utilities
 
-NUM_MALICIOUS_CLIENTS = 6  # Number of clients simulating malicious behavior
+random.seed(42)  # For reproducibility
+# Define number of malicious clients simulating adversarial behavior
+NUM_CLIENTS = 30 # Total number of clients in the simulation
+NUM_MALICIOUS_CLIENTS = 6 # Number of clients simulating malicious behavior
+MALICIOUS_CLIENTS = random.sample(range(NUM_CLIENTS), NUM_MALICIOUS_CLIENTS)  # Randomly select malicious clients
 
 class FlowerClient(NumPyClient):
     """
     Custom Flower NumPyClient that trains and evaluates a PyTorch model.
     """
-    def __init__(self, net, trainloader, valloader, local_epochs, is_malicious=False):
-        # Initialize client with model, data loaders, training epochs, and malicious flag
+    def __init__(self, net, trainloader, valloader, local_epochs, client_id, is_malicious=False):
+        # Initialize client with model, data loaders, training epochs, client ID, and malicious flag
         self.net = net  # PyTorch model instance
         self.trainloader = trainloader  # DataLoader for local training data
         self.valloader = valloader  # DataLoader for local validation data
         self.local_epochs = local_epochs  # Number of epochs to train locally
+        self.client_id = client_id  # Unique identifier for this client
         self.is_malicious = is_malicious  # Whether client simulates malicious behavior
         # Select device: GPU if available, else CPU
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -30,7 +36,7 @@ class FlowerClient(NumPyClient):
         # If malicious, alter labels to simulate adversarial behavior in training
         if self.is_malicious:
             for batch in self.trainloader:
-                batch["label"] = torch.remainder(batch["label"] + 5, 10)
+                batch["character"] = torch.remainder(batch["character"] + 5, 62)  # FEMNIST has 62 classes
 
         # Perform local training and retrieve training loss
         train_loss = train(self.net, self.trainloader, self.local_epochs, self.device)
@@ -40,10 +46,11 @@ class FlowerClient(NumPyClient):
         if self.is_malicious:
             new_weights = [w * -5.0 for w in new_weights]
         # Return (possibly poisoned) weights, dataset size, and metrics
+        # Return numeric client_id so server can log IDs rather than proxy objects
         return (
             new_weights,
             len(self.trainloader.dataset),
-            {"train_loss": train_loss, "malicious": self.is_malicious},
+            {"train_loss": train_loss, "malicious": self.is_malicious, "client_id": self.client_id},
         )
 
     def evaluate(self, parameters, config):
@@ -70,13 +77,14 @@ def client_fn(context: Context):
     ###################################################################
     #### CHANGE TO FALSE IF YOU WANT TO TURN OFF MALICIOUS CLIENTS ####
     #is_malicious = False
-    is_malicious = partition_id < NUM_MALICIOUS_CLIENTS # First two clients simulate malicious behavior
+    is_malicious = partition_id in MALICIOUS_CLIENTS # First two clients simulate malicious behavior
     ####################################################################
 
     # Load the partitioned train and validation data for this client
     trainloader, valloader = load_data(partition_id, num_partitions)
-    # Return a FlowerClient wrapped as a Flower client application
-    return FlowerClient(net, trainloader, valloader, local_epochs, is_malicious).to_client()
+    # Return a FlowerClient wrapped as a Flower client application, including client ID
+    # Pass numeric partition_id as client_id
+    return FlowerClient(net, trainloader, valloader, local_epochs, partition_id, is_malicious).to_client()
 
 # Create a Flower client application using client_fn
 app = ClientApp(client_fn)

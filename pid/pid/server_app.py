@@ -37,6 +37,10 @@ class FedPIDAvg(FedAvg):
         # Initialize malicious rounds log with header
         with open(MALICIOUS_ROUNDS_LOG, "w") as f:
             f.write("round\n")
+        # Initialize attack detection log with header (round, kept clients, thrown clients, TP, FP, FN, TN, FPR, TNR)
+        with open("attack_detection.csv", "w") as f:
+            writer = csv.writer(f)
+            writer.writerow(["round", "kept", "thrown", "TP", "FP", "FN", "TN", "fpr", "tnr"])
 
     def aggregate_fit(self, server_round, results, failures):
         """
@@ -67,8 +71,8 @@ class FedPIDAvg(FedAvg):
         D = self.Kd * derivative
         # Compute PID term
         pid_term = P + I + D
-        # Scaling factor clamped to [0,1]
-        scaling = max(0.1, min(2.5, 1.0 + pid_term))
+        # Allow scaling up and down for better performance
+        scaling = max(0.2, min(2.0, 1.0 + pid_term))  # 20%-200% scaling range
         # Update state
         self.prev_error = error
         self.prev_loss = avg_loss
@@ -109,18 +113,42 @@ class FedPIDAvg(FedAvg):
         mean_update = np.mean(updates_matrix, axis=0)
         distances = np.linalg.norm(updates_matrix - mean_update, axis=1)
         # Set k for trimmed mean (number of outliers to trim from each end)
-        k = NUM_MALICIOUS_CLIENTS # Adjust based on number of malicious clients
+        k = NUM_MALICIOUS_CLIENTS  # Adjust based on number of malicious clients
         # Sort indices by distance
         sorted_indices = np.argsort(distances)
         # Keep only the middle updates (trim k from each end)
-        trimmed_indices = sorted_indices[k:len(sorted_indices)-k]
+        if k == 0:
+            # No trimming needed - use all clients
+            trimmed_indices = sorted_indices
+        else:
+            # Trim k clients from each end
+            trimmed_indices = sorted_indices[k:-k]
+            # --- Attack detection logging ---
+            # Identify kept and thrown client IDs by using client_id metric from res.metrics
+            kept_cids = [results[i][1].metrics.get("client_id") for i in trimmed_indices]
+            thrown_indices = set(range(len(results))) - set(trimmed_indices)
+            thrown_cids = [results[i][1].metrics.get("client_id") for i in sorted(thrown_indices)]
+            # Ground-truth malicious client IDs from metrics
+            malicious_cids = [res.metrics.get("client_id") for _, res in results if res.metrics.get("malicious")]
+            # Compute detection metrics
+            tp = sum(1 for cid in thrown_cids if cid in malicious_cids)
+            fp = sum(1 for cid in thrown_cids if cid not in malicious_cids)
+            fn = sum(1 for cid in kept_cids if cid in malicious_cids)
+            tn = sum(1 for cid in kept_cids if cid not in malicious_cids)
+            fpr = fp / (fp + tn + 1e-10)
+            tnr = tn / (tn + fp + 1e-10)
+            # Log to attack_detection.csv: round, kept, thrown, TP, FP, FN, TN, FPR, TNR
+            with open("attack_detection.csv", "a") as f:
+                writer = csv.writer(f)
+                writer.writerow([server_round, kept_cids, thrown_cids, tp, fp, fn, tn, fpr, tnr])
         trimmed_updates = updates_matrix[trimmed_indices]
         trimmed_distances = distances[trimmed_indices]
-        # Compute trust weights (inverse squared distance)
+        
+        # Always use advanced trust weighting (superior for precision/recall)
+        # This works for both malicious and non-malicious cases
         epsilon = 1e-6
         trust_weights = 1 / (trimmed_distances**2 + epsilon)
         trust_weights = trust_weights / np.sum(trust_weights)  # Normalize
-        # Compute the trust-weighted mean
         weighted_mean_update = np.average(trimmed_updates, axis=0, weights=trust_weights)
         # Apply PID scaling to the trust-weighted trimmed mean
         scaled_update = scaling * weighted_mean_update
@@ -203,8 +231,8 @@ def evaluate_fn(server_round, parameters, config):
         for batch in valloader:
             # Handle both dict and tuple batch
             if isinstance(batch, dict):
-                x = batch["img"]
-                y = batch["label"]
+                x = batch["image"]
+                y = batch["character"]
             elif isinstance(batch, (tuple, list)) and len(batch) == 2:
                 x, y = batch
             else:
@@ -238,4 +266,5 @@ def evaluate_fn(server_round, parameters, config):
     # Macro-average TNR and FPR
     tnr = float(sum(tn_i / (tn_i + fp_i + 1e-10) for tn_i, fp_i in zip(tn_list, fp_list)) / len(labels))
     fpr = float(sum(fp_i / (fp_i + tn_i + 1e-10) for tn_i, fp_i in zip(tn_list, fp_list)) / len(labels))
+    # Return metrics including FPR and TNR
     return 0.0, {"accuracy": acc, "recall": rec, "precision": prec, "fpr": fpr, "tnr": tnr}
